@@ -198,3 +198,60 @@ def test_format_report_renders_all_platforms_and_total():
 def test_format_report_handles_empty_results():
     report = format_report("Nobody", [])
     assert "Total: 0 mentions" in report
+
+
+from brand_pulse import run_brand_pulse
+
+
+def test_run_brand_pulse_continues_when_one_platform_fails():
+    good_result = PlatformResult("Reddit", 5, "top 25 Reddit results, past week", [])
+
+    def fake_reddit(query, days, limit):
+        return good_result
+
+    def fake_twitter(query, days, limit):
+        raise CommandError("twitter-cli: cookies expired")
+
+    def fake_youtube(query, limit):
+        return PlatformResult("YouTube", 3, "top 25 YouTube results (no native recency filter)", [])
+
+    def fake_web(query, limit):
+        return PlatformResult("Web/News", 2, "top 25 web/news results", [])
+
+    results, errors = run_brand_pulse(
+        "Duolingo", days=7, limit=25,
+        reddit_fn=fake_reddit, twitter_fn=fake_twitter,
+        youtube_fn=fake_youtube, web_fn=fake_web,
+    )
+
+    assert results == [good_result,
+                        PlatformResult("YouTube", 3, "top 25 YouTube results (no native recency filter)", []),
+                        PlatformResult("Web/News", 2, "top 25 web/news results", [])]
+    assert errors == [("Twitter/X", "twitter-cli: cookies expired")]
+
+
+def test_run_brand_pulse_isolates_keyerror_and_indexerror_too():
+    """Widened exception handling: parsing bugs (KeyError/IndexError/TypeError)
+    in a platform function must be isolated the same way CommandError is,
+    since json.loads() succeeding doesn't guarantee the expected shape."""
+    def fake_reddit(query, days, limit):
+        return PlatformResult("Reddit", 5, "top 25 Reddit results, past week", [])
+
+    def fake_twitter(query, days, limit):
+        raise KeyError("text")
+
+    def fake_youtube(query, limit):
+        raise IndexError("list index out of range")
+
+    def fake_web(query, limit):
+        return PlatformResult("Web/News", 2, "top 25 web/news results", [])
+
+    results, errors = run_brand_pulse(
+        "Duolingo", days=7, limit=25,
+        reddit_fn=fake_reddit, twitter_fn=fake_twitter,
+        youtube_fn=fake_youtube, web_fn=fake_web,
+    )
+
+    assert [r.platform for r in results] == ["Reddit", "Web/News"]
+    assert ("Twitter/X", "'text'") == errors[0]
+    assert errors[1][0] == "YouTube"

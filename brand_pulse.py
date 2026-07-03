@@ -143,3 +143,71 @@ def format_report(brand: str, results: list[PlatformResult]) -> str:
     lines.append("")
     lines.append(f"Total: {total} mentions across {len(results)} platform(s)")
     return "\n".join(lines)
+
+
+def run_brand_pulse(
+    brand: str,
+    days: int = 7,
+    limit: int = 25,
+    reddit_fn=search_reddit,
+    twitter_fn=search_twitter,
+    youtube_fn=search_youtube,
+    web_fn=search_web,
+) -> tuple[list[PlatformResult], list[tuple[str, str]]]:
+    """Run all 4 platform searches, isolating failures per-platform.
+
+    Returns (results, errors) — errors is a list of (platform_name, message)
+    for any platform that raised CommandError (or a parsing-shape error like
+    KeyError/IndexError/TypeError, since a JSON response can be well-formed
+    JSON but still not have the fields we expect), so one dead platform
+    doesn't take down the whole report.
+    """
+    platform_calls = [
+        ("Reddit", lambda: reddit_fn(brand, days, limit)),
+        ("Twitter/X", lambda: twitter_fn(brand, days, limit)),
+        ("YouTube", lambda: youtube_fn(brand, limit)),
+        ("Web/News", lambda: web_fn(brand, limit)),
+    ]
+    results = []
+    errors = []
+    for name, call in platform_calls:
+        try:
+            results.append(call())
+        except (CommandError, KeyError, IndexError, TypeError) as e:
+            errors.append((name, str(e)))
+    return results, errors
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="brand_pulse",
+        description="Cross-platform mention-count snapshot for a brand, "
+                     "built on agent-reach (github.com/Panniantong/agent-reach).",
+    )
+    parser.add_argument("brand", help="Brand name to search for")
+    parser.add_argument("--days", type=int, default=7,
+                         help="Timeframe in days for platforms that support it (default: 7)")
+    parser.add_argument("--limit", type=int, default=25,
+                         help="Max results to request per platform (default: 25)")
+    parser.add_argument("--json", action="store_true",
+                         help="Output machine-readable JSON instead of the text report")
+    args = parser.parse_args()
+
+    results, errors = run_brand_pulse(args.brand, days=args.days, limit=args.limit)
+
+    if args.json:
+        payload = {
+            "brand": args.brand,
+            "results": [r.__dict__ for r in results],
+            "errors": [{"platform": p, "message": m} for p, m in errors],
+            "total_mentions": sum(r.count for r in results),
+        }
+        print(json.dumps(payload, indent=2))
+    else:
+        print(format_report(args.brand, results))
+        for platform, message in errors:
+            print(f"\n  [!] {platform} unavailable: {message}")
+
+
+if __name__ == "__main__":
+    main()
