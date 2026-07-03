@@ -172,3 +172,29 @@ def test_search_web_raises_commanderror_on_invalid_json():
     with patch("brand_pulse.run_command", return_value="not json"):
         with pytest.raises(CommandError):
             search_web("Duolingo")
+
+
+from brand_pulse import format_report, PlatformResult
+
+
+def test_format_report_renders_all_platforms_and_total():
+    results = [
+        PlatformResult("Reddit", 12, "top 25 Reddit results, past week", ["a", "b"]),
+        PlatformResult("Twitter/X", 25, "top 25 tweets since 2026-06-26", ["c"]),
+        PlatformResult("YouTube", 8, "top 25 YouTube results (no native recency filter)", []),
+        PlatformResult("Web/News", 5, "top 25 web/news results", []),
+    ]
+
+    report = format_report("Duolingo", results)
+
+    assert "Duolingo" in report
+    assert "Reddit: 12 (top 25 Reddit results, past week)" in report
+    assert "Twitter/X: 25 (top 25 tweets since 2026-06-26)" in report
+    assert "YouTube: 8 (top 25 YouTube results (no native recency filter))" in report
+    assert "Web/News: 5 (top 25 web/news results)" in report
+    assert "Total: 50 mentions" in report
+
+
+def test_format_report_handles_empty_results():
+    report = format_report("Nobody", [])
+    assert "Total: 0 mentions" in report

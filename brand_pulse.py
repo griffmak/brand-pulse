@@ -131,3 +131,15 @@ def search_web(query: str, limit: int = 25) -> PlatformResult:
         scope=f"top {limit} web/news results",
         sample_titles=titles[:3],
     )
+
+
+def format_report(brand: str, results: list[PlatformResult]) -> str:
+    lines = [f"Brand Pulse: {brand}", "=" * (13 + len(brand))]
+    for r in results:
+        lines.append(f"  {r.platform}: {r.count} ({r.scope})")
+        for title in r.sample_titles:
+            lines.append(f"      - {title}")
+    total = sum(r.count for r in results)
+    lines.append("")
+    lines.append(f"Total: {total} mentions across {len(results)} platform(s)")
+    return "\n".join(lines)
