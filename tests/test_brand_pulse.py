@@ -1,3 +1,4 @@
+import json
 import subprocess
 import pytest
 
@@ -65,3 +66,38 @@ def test_search_reddit_raises_commanderror_on_invalid_json():
     with patch("brand_pulse.run_command", return_value="not json"):
         with pytest.raises(CommandError):
             search_reddit("Duolingo")
+
+
+from brand_pulse import search_twitter
+
+_TWITTER_JSON = json.dumps({
+    "ok": True,
+    "schema_version": "1",
+    "data": [
+        {"id": "1", "text": "Duolingo streak day 400, still going strong"},
+        {"id": "2", "text": "why does the duolingo owl haunt my dreams"},
+    ],
+})
+
+
+def test_search_twitter_parses_count_and_scope():
+    with patch("brand_pulse.run_command", return_value=_TWITTER_JSON) as mock_run:
+        result = search_twitter("Duolingo", days=7, limit=25)
+
+    assert result.platform == "Twitter/X"
+    assert result.count == 2
+    assert result.scope.startswith("top 25 tweets since ")
+    assert result.sample_titles == [
+        "Duolingo streak day 400, still going strong",
+        "why does the duolingo owl haunt my dreams",
+    ]
+    called_cmd = mock_run.call_args[0][0]
+    assert called_cmd[:3] == ["twitter", "search", "Duolingo"]
+    assert "--since" in called_cmd
+    assert "--json" in called_cmd
+
+
+def test_search_twitter_raises_commanderror_on_invalid_json():
+    with patch("brand_pulse.run_command", return_value="not json"):
+        with pytest.raises(CommandError):
+            search_twitter("Duolingo")

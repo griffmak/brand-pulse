@@ -71,3 +71,26 @@ def search_reddit(query: str, days: int = 7, limit: int = 25) -> PlatformResult:
         scope=scope,
         sample_titles=[p["title"] for p in posts[:3]],
     )
+
+
+def _date_days_ago(days: int) -> str:
+    return (date.today() - timedelta(days=days)).isoformat()
+
+
+def search_twitter(query: str, days: int = 7, limit: int = 25) -> PlatformResult:
+    since_date = _date_days_ago(days)
+    output = run_command([
+        "twitter", "search", query,
+        "--since", since_date, "--max", str(limit), "--json",
+    ])
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as e:
+        raise CommandError(f"twitter-cli returned invalid JSON: {e}") from e
+    tweets = payload.get("data", [])
+    return PlatformResult(
+        platform="Twitter/X",
+        count=len(tweets),
+        scope=f"top {limit} tweets since {since_date}",
+        sample_titles=[t["text"] for t in tweets[:3]],
+    )
