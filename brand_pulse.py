@@ -36,3 +36,35 @@ class PlatformResult:
     count: int
     scope: str
     sample_titles: list[str] = field(default_factory=list)
+
+
+def _reddit_time_filter(days: int) -> str:
+    if days <= 1:
+        return "day"
+    if days <= 7:
+        return "week"
+    if days <= 30:
+        return "month"
+    if days <= 365:
+        return "year"
+    return "all"
+
+
+def search_reddit(query: str, days: int = 7, limit: int = 25) -> PlatformResult:
+    time_filter = _reddit_time_filter(days)
+    output = run_command([
+        "opencli", "reddit", "search", query,
+        "--time", time_filter, "--limit", str(limit), "-f", "json",
+    ])
+    posts = json.loads(output)
+    scope = (
+        f"top {limit} Reddit results, all time"
+        if time_filter == "all"
+        else f"top {limit} Reddit results, past {time_filter}"
+    )
+    return PlatformResult(
+        platform="Reddit",
+        count=len(posts),
+        scope=scope,
+        sample_titles=[p["title"] for p in posts[:3]],
+    )
