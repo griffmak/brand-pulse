@@ -20,6 +20,11 @@ def test_run_command_raises_commanderror_on_timeout():
         run_command(["sleep", "5"], timeout=1)
 
 
+def test_run_command_raises_commanderror_when_binary_missing():
+    with pytest.raises(CommandError):
+        run_command(["this-binary-does-not-exist-xyz"])
+
+
 from unittest.mock import patch
 
 from brand_pulse import search_reddit
@@ -255,3 +260,29 @@ def test_run_brand_pulse_isolates_keyerror_and_indexerror_too():
     assert [r.platform for r in results] == ["Reddit", "Web/News"]
     assert ("Twitter/X", "'text'") == errors[0]
     assert errors[1][0] == "YouTube"
+
+
+def test_run_brand_pulse_isolates_attributeerror_too():
+    """A platform response can be valid JSON but the wrong shape (e.g. a bare
+    list/None instead of a dict), so payload.get(...) raises AttributeError —
+    that must be isolated the same way CommandError/KeyError/IndexError are."""
+    def fake_reddit(query, days, limit):
+        return PlatformResult("Reddit", 5, "top 25 Reddit results, past week", [])
+
+    def fake_twitter(query, days, limit):
+        raise AttributeError("'list' object has no attribute 'get'")
+
+    def fake_youtube(query, limit):
+        return PlatformResult("YouTube", 3, "top 25 YouTube results (no native recency filter)", [])
+
+    def fake_web(query, limit):
+        return PlatformResult("Web/News", 2, "top 25 web/news results", [])
+
+    results, errors = run_brand_pulse(
+        "Duolingo", days=7, limit=25,
+        reddit_fn=fake_reddit, twitter_fn=fake_twitter,
+        youtube_fn=fake_youtube, web_fn=fake_web,
+    )
+
+    assert [r.platform for r in results] == ["Reddit", "YouTube", "Web/News"]
+    assert errors == [("Twitter/X", "'list' object has no attribute 'get'")]

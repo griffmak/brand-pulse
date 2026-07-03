@@ -11,6 +11,7 @@ count per platform.
 import argparse
 import json
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
@@ -25,6 +26,8 @@ def run_command(cmd: list[str], timeout: int = 30) -> str:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise CommandError(f"{' '.join(cmd)} timed out after {timeout}s")
+    except OSError as e:
+        raise CommandError(f"{' '.join(cmd)} failed to start: {e}") from e
     if result.returncode != 0:
         raise CommandError(f"{' '.join(cmd)} failed: {result.stderr.strip()}")
     return result.stdout
@@ -158,9 +161,9 @@ def run_brand_pulse(
 
     Returns (results, errors) — errors is a list of (platform_name, message)
     for any platform that raised CommandError (or a parsing-shape error like
-    KeyError/IndexError/TypeError, since a JSON response can be well-formed
-    JSON but still not have the fields we expect), so one dead platform
-    doesn't take down the whole report.
+    KeyError/IndexError/TypeError/AttributeError, since a JSON response can be
+    well-formed JSON but still not have the fields or shape we expect), so one
+    dead platform doesn't take down the whole report.
     """
     platform_calls = [
         ("Reddit", lambda: reddit_fn(brand, days, limit)),
@@ -173,7 +176,7 @@ def run_brand_pulse(
     for name, call in platform_calls:
         try:
             results.append(call())
-        except (CommandError, KeyError, IndexError, TypeError) as e:
+        except (CommandError, KeyError, IndexError, TypeError, AttributeError) as e:
             errors.append((name, str(e)))
     return results, errors
 
@@ -206,7 +209,10 @@ def main():
     else:
         print(format_report(args.brand, results))
         for platform, message in errors:
-            print(f"\n  [!] {platform} unavailable: {message}")
+            print(f"\n  [!] {platform} unavailable: {message}", file=sys.stderr)
+
+    if not results and errors:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
