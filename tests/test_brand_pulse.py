@@ -59,3 +59,9 @@ def test_search_reddit_time_filter_boundaries():
         assert search_reddit("x", days=1, limit=10).scope == "top 10 Reddit results, past day"
         assert search_reddit("x", days=30, limit=10).scope == "top 10 Reddit results, past month"
         assert search_reddit("x", days=400, limit=10).scope == "top 10 Reddit results, all time"
+
+
+def test_search_reddit_raises_commanderror_on_invalid_json():
+    with patch("brand_pulse.run_command", return_value="not json"):
+        with pytest.raises(CommandError):
+            search_reddit("Duolingo")

@@ -56,7 +56,10 @@ def search_reddit(query: str, days: int = 7, limit: int = 25) -> PlatformResult:
         "opencli", "reddit", "search", query,
         "--time", time_filter, "--limit", str(limit), "-f", "json",
     ])
-    posts = json.loads(output)
+    try:
+        posts = json.loads(output)
+    except json.JSONDecodeError as e:
+        raise CommandError(f"opencli returned invalid JSON: {e}") from e
     scope = (
         f"top {limit} Reddit results, all time"
         if time_filter == "all"
