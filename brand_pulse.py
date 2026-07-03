@@ -21,7 +21,10 @@ class CommandError(RuntimeError):
 
 def run_command(cmd: list[str], timeout: int = 30) -> str:
     """Run a shell command and return its stdout, raising CommandError on failure."""
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise CommandError(f"{' '.join(cmd)} timed out after {timeout}s")
     if result.returncode != 0:
         raise CommandError(f"{' '.join(cmd)} failed: {result.stderr.strip()}")
     return result.stdout
