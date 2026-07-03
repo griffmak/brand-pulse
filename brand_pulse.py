@@ -108,3 +108,26 @@ def search_youtube(query: str, limit: int = 25) -> PlatformResult:
         scope=f"top {limit} YouTube results (no native recency filter)",
         sample_titles=titles[:3],
     )
+
+
+def search_web(query: str, limit: int = 25) -> PlatformResult:
+    output = run_command([
+        "mcporter", "call", "exa.web_search_exa",
+        f"query={query} brand news", f"numResults={limit}", "--output", "json",
+    ], timeout=45)
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as e:
+        raise CommandError(f"mcporter returned invalid JSON: {e}") from e
+    text = payload["content"][0]["text"]
+    titles = [
+        line[len("Title: "):].strip()
+        for line in text.splitlines()
+        if line.startswith("Title: ")
+    ]
+    return PlatformResult(
+        platform="Web/News",
+        count=len(titles),
+        scope=f"top {limit} web/news results",
+        sample_titles=titles[:3],
+    )

@@ -125,3 +125,50 @@ def test_search_youtube_parses_count_and_scope():
          "--print", "%(title)s", "--no-warnings"],
         timeout=60,
     )
+
+
+from brand_pulse import search_web
+
+_EXA_JSON = json.dumps({
+    "content": [
+        {
+            "type": "text",
+            "text": (
+                "Title: Duolingo Resets 'Unhinged' Marketing - Business Insider\n"
+                "URL: https://example.com/a\nPublished: 2026-04-22\n"
+                "Highlights:\n...\n\n---\n\n"
+                "Title: Duolingo Won the Internet With Chaos - Inc.\n"
+                "URL: https://example.com/b\nPublished: 2026-04-23\n"
+                "Highlights:\n...\n\n---\n\n"
+                "Title: Duolingo makes licensing debut with MINISO - Brands Untapped\n"
+                "URL: https://example.com/c\nPublished: 2026-05-30\n"
+                "Highlights:\n...\n"
+            ),
+        }
+    ]
+})
+
+
+def test_search_web_parses_count_and_scope():
+    with patch("brand_pulse.run_command", return_value=_EXA_JSON) as mock_run:
+        result = search_web("Duolingo", limit=25)
+
+    assert result.platform == "Web/News"
+    assert result.count == 3
+    assert result.scope == "top 25 web/news results"
+    assert result.sample_titles == [
+        "Duolingo Resets 'Unhinged' Marketing - Business Insider",
+        "Duolingo Won the Internet With Chaos - Inc.",
+        "Duolingo makes licensing debut with MINISO - Brands Untapped",
+    ]
+    mock_run.assert_called_once_with(
+        ["mcporter", "call", "exa.web_search_exa",
+         "query=Duolingo brand news", "numResults=25", "--output", "json"],
+        timeout=45,
+    )
+
+
+def test_search_web_raises_commanderror_on_invalid_json():
+    with patch("brand_pulse.run_command", return_value="not json"):
+        with pytest.raises(CommandError):
+            search_web("Duolingo")
