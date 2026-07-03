@@ -94,3 +94,17 @@ def search_twitter(query: str, days: int = 7, limit: int = 25) -> PlatformResult
         scope=f"top {limit} tweets since {since_date}",
         sample_titles=[t["text"] for t in tweets[:3]],
     )
+
+
+def search_youtube(query: str, limit: int = 25) -> PlatformResult:
+    output = run_command([
+        "yt-dlp", f"ytsearch{limit}:{query}",
+        "--flat-playlist", "--print", "%(title)s", "--no-warnings",
+    ], timeout=60)
+    titles = [line for line in output.splitlines() if line.strip()]
+    return PlatformResult(
+        platform="YouTube",
+        count=len(titles),
+        scope=f"top {limit} YouTube results (no native recency filter)",
+        sample_titles=titles[:3],
+    )

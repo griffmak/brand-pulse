@@ -101,3 +101,27 @@ def test_search_twitter_raises_commanderror_on_invalid_json():
     with patch("brand_pulse.run_command", return_value="not json"):
         with pytest.raises(CommandError):
             search_twitter("Duolingo")
+
+
+from brand_pulse import search_youtube
+
+_YOUTUBE_TITLES = "Learn Chess on Duolingo\nDo your lesson, no buts.\nLanguage Learning Is Hard\n"
+
+
+def test_search_youtube_parses_count_and_scope():
+    with patch("brand_pulse.run_command", return_value=_YOUTUBE_TITLES) as mock_run:
+        result = search_youtube("Duolingo", limit=25)
+
+    assert result.platform == "YouTube"
+    assert result.count == 3
+    assert result.scope == "top 25 YouTube results (no native recency filter)"
+    assert result.sample_titles == [
+        "Learn Chess on Duolingo",
+        "Do your lesson, no buts.",
+        "Language Learning Is Hard",
+    ]
+    mock_run.assert_called_once_with(
+        ["yt-dlp", "ytsearch25:Duolingo", "--flat-playlist",
+         "--print", "%(title)s", "--no-warnings"],
+        timeout=60,
+    )
