@@ -286,3 +286,58 @@ def test_run_brand_pulse_isolates_attributeerror_too():
 
     assert [r.platform for r in results] == ["Reddit", "YouTube", "Web/News"]
     assert errors == [("Twitter/X", "'list' object has no attribute 'get'")]
+
+
+def test_run_brand_pulse_calls_on_progress_for_each_platform():
+    def fake_reddit(query, days, limit):
+        return PlatformResult("Reddit", 5, "top 25 Reddit results, past week", [])
+
+    def fake_twitter(query, days, limit):
+        raise CommandError("twitter-cli: cookies expired")
+
+    def fake_youtube(query, limit):
+        return PlatformResult("YouTube", 3, "top 25 YouTube results (no native recency filter)", [])
+
+    def fake_web(query, limit):
+        return PlatformResult("Web/News", 2, "top 25 web/news results", [])
+
+    progress_calls = []
+
+    def record_progress(platform, result, error):
+        progress_calls.append((platform, result, error))
+
+    run_brand_pulse(
+        "Duolingo", days=7, limit=25,
+        reddit_fn=fake_reddit, twitter_fn=fake_twitter,
+        youtube_fn=fake_youtube, web_fn=fake_web,
+        on_progress=record_progress,
+    )
+
+    assert progress_calls == [
+        ("Reddit", PlatformResult("Reddit", 5, "top 25 Reddit results, past week", []), None),
+        ("Twitter/X", None, "twitter-cli: cookies expired"),
+        ("YouTube", PlatformResult("YouTube", 3, "top 25 YouTube results (no native recency filter)", []), None),
+        ("Web/News", PlatformResult("Web/News", 2, "top 25 web/news results", []), None),
+    ]
+
+
+def test_run_brand_pulse_without_on_progress_still_works():
+    """Existing callers that don't pass on_progress must be unaffected."""
+    def fake_reddit(query, days, limit):
+        return PlatformResult("Reddit", 5, "top 25 Reddit results, past week", [])
+
+    def fake_twitter(query, days, limit):
+        return PlatformResult("Twitter/X", 1, "top 25 tweets since 2026-06-26", [])
+
+    def fake_youtube(query, limit):
+        return PlatformResult("YouTube", 1, "top 25 YouTube results (no native recency filter)", [])
+
+    def fake_web(query, limit):
+        return PlatformResult("Web/News", 1, "top 25 web/news results", [])
+
+    results, errors = run_brand_pulse(
+        "Duolingo", reddit_fn=fake_reddit, twitter_fn=fake_twitter,
+        youtube_fn=fake_youtube, web_fn=fake_web,
+    )
+    assert len(results) == 4
+    assert errors == []

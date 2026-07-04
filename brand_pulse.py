@@ -156,6 +156,7 @@ def run_brand_pulse(
     twitter_fn=search_twitter,
     youtube_fn=search_youtube,
     web_fn=search_web,
+    on_progress=None,
 ) -> tuple[list[PlatformResult], list[tuple[str, str]]]:
     """Run all 4 platform searches, isolating failures per-platform.
 
@@ -164,6 +165,12 @@ def run_brand_pulse(
     KeyError/IndexError/TypeError/AttributeError, since a JSON response can be
     well-formed JSON but still not have the fields or shape we expect), so one
     dead platform doesn't take down the whole report.
+
+    If on_progress is given, it's called as on_progress(platform_name, result,
+    error) right after each platform attempt: result is the PlatformResult and
+    error is None on success; result is None and error is the message string
+    on failure. This lets a caller (e.g. the web app's SSE stream) push live
+    feedback as each platform resolves, without changing the return value.
     """
     platform_calls = [
         ("Reddit", lambda: reddit_fn(brand, days, limit)),
@@ -175,9 +182,14 @@ def run_brand_pulse(
     errors = []
     for name, call in platform_calls:
         try:
-            results.append(call())
+            result = call()
+            results.append(result)
+            if on_progress:
+                on_progress(name, result, None)
         except (CommandError, KeyError, IndexError, TypeError, AttributeError) as e:
             errors.append((name, str(e)))
+            if on_progress:
+                on_progress(name, None, str(e))
     return results, errors
 
 
