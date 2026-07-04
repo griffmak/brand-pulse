@@ -76,22 +76,10 @@ INDEX_HTML = """<!doctype html>
         es.close();
       });
 
-      // Note: the browser fires the same "error" event both for a named
-      // `event: error` block sent by the server (a MessageEvent, with
-      // .data) and for a connection failure (a plain Event, no .data).
-      // Using addEventListener('error', ...) AND es.onerror would both
-      // fire for both cases, so this single handler covers both.
-      es.addEventListener('error', (e) => {
-        if (e.data) {
-          const data = JSON.parse(e.data);
-          const line = document.createElement('div');
-          line.className = 'error';
-          line.textContent = '✗ ' + data.message;
-          progressEl.appendChild(line);
-        }
+      es.onerror = () => {
         goBtn.disabled = false;
         es.close();
-      });
+      };
     }
 
     goBtn.addEventListener('click', runCheck);
@@ -118,13 +106,10 @@ def stream(brand: str, days: int = 7, limit: int = 25):
             q.put(("progress", platform, result, error))
 
         def worker():
-            try:
-                results, errors = run_brand_pulse(
-                    brand, days=days, limit=limit, on_progress=on_progress
-                )
-                q.put(("done", results, errors))
-            except Exception as e:
-                q.put(("error", str(e)))
+            results, errors = run_brand_pulse(
+                brand, days=days, limit=limit, on_progress=on_progress
+            )
+            q.put(("done", results, errors))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -146,10 +131,6 @@ def stream(brand: str, days: int = 7, limit: int = 25):
                         "message": error,
                     }
                 yield f"event: progress\ndata: {json.dumps(payload)}\n\n"
-            elif item[0] == "error":
-                _, message = item
-                yield f"event: error\ndata: {json.dumps({'message': message})}\n\n"
-                break
             else:
                 _, results, errors = item
                 report = format_report(brand, results)

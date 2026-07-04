@@ -37,6 +37,20 @@ python3 brand_pulse.py "Duolingo" --days 30 --limit 50
 python3 brand_pulse.py "Duolingo" --json
 ```
 
+## Web UI
+
+There's also a local web frontend — a page you type a brand name into and
+watch each platform resolve live, instead of using the CLI:
+
+```bash
+pip install -r requirements.txt
+python3 app.py
+```
+
+Then open http://127.0.0.1:8000. Requires the same agent-reach setup as the
+CLI (Reddit needs Chrome open with OpenCLI connected; Twitter/YouTube/Web
+work the same as documented above).
+
 ## Honest numbers, not fake precision
 
 Every count is a **scoped result-set size** — "top N results in the last
