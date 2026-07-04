@@ -37,3 +37,18 @@ def test_stream_endpoint_emits_progress_and_done_events():
     assert '"status": "error"' in body
     assert "event: done" in body
     assert "Total: 5 mentions" in body
+
+
+def test_stream_endpoint_emits_error_event_on_worker_exception():
+    def fake_run_brand_pulse(brand, days, limit, on_progress=None):
+        raise RuntimeError("boom")
+
+    with patch("app.run_brand_pulse", fake_run_brand_pulse):
+        client = TestClient(app_module.app)
+        # If the generator failed to terminate (the bug under test), this
+        # `with` block would hang forever instead of returning.
+        with client.stream("GET", "/api/stream", params={"brand": "Duolingo"}) as response:
+            body = "".join(response.iter_text())
+
+    assert "event: error" in body
+    assert '"message": "boom"' in body
