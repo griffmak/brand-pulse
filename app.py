@@ -22,28 +22,93 @@ INDEX_HTML = """<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Brand Pulse</title>
 <style>
-  body { font-family: -apple-system, sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1rem; }
-  h1 { font-size: 1.4rem; }
-  #controls { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
-  #brand { flex: 1; padding: 0.5rem; font-size: 1rem; }
-  button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
-  #status { font-family: monospace; color: #666; }
-  #progress div { padding: 0.25rem 0; font-family: monospace; }
-  #progress .error { color: #b00020; }
-  #report { white-space: pre-wrap; font-family: monospace; background: #f5f5f5; padding: 1rem; margin-top: 1rem; }
+  :root {
+    --bg: #010409; --term: #0d1117; --chrome: #161b22; --border: #30363d;
+    --green: #3fb950; --dim: #8b949e; --red: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--green);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 14px; line-height: 1.7;
+    max-width: 680px; margin: 8vh auto; padding: 0 1rem;
+  }
+  ::selection { background: var(--green); color: var(--term); }
+  .window {
+    background: var(--term); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.65);
+    overflow: hidden;
+  }
+  .chrome {
+    display: flex; align-items: center; gap: 7px; padding: 9px 12px;
+    background: var(--chrome); border-bottom: 1px solid var(--border);
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+  .dot.r { background: #ff5f56; }
+  .dot.y { background: #ffbd2e; }
+  .dot.g { background: #27c93f; }
+  .chrome h1 {
+    flex: 1; margin: 0 45px 0 0; /* right margin balances the dots */
+    font-size: 12px; font-weight: 400; color: var(--dim); text-align: center;
+  }
+  .term { padding: 1.1rem 1.25rem 1.4rem; min-height: 280px; }
+  #controls { display: flex; flex-wrap: wrap; align-items: baseline; margin-bottom: 1rem; }
+  .ps1 { color: var(--dim); white-space: pre; }
+  #brand {
+    field-sizing: content; min-width: 2ch; max-width: 100%;
+    background: none; border: none; outline: none; padding: 0;
+    font: inherit; color: inherit; caret-color: var(--green);
+  }
+  #brand::placeholder { color: var(--dim); opacity: 0.6; }
+  .cursor { animation: blink 1.1s steps(1) infinite; }
+  #brand:focus + .cursor { visibility: hidden; }
+  #go {
+    margin-left: auto; padding: 1px 10px;
+    background: none; border: 1px solid var(--green); border-radius: 4px;
+    font: inherit; color: var(--green); cursor: pointer;
+  }
+  #go:hover:not(:disabled) { background: rgba(63, 185, 80, 0.12); }
+  #go:focus-visible { outline: 1px solid var(--green); outline-offset: 2px; }
+  #go:disabled { border-color: var(--border); color: var(--dim); cursor: default; }
+  #status { color: var(--dim); min-height: 1.7em; }
+  #progress { white-space: pre-wrap; }
+  #progress div { animation: rise 0.25s ease-out; }
+  #progress .pending { color: var(--dim); }
+  #progress .error { color: var(--red); }
+  #report {
+    white-space: pre-wrap; font: inherit;
+    margin: 1rem 0 0; padding-top: 1rem; border-top: 1px dashed var(--border);
+  }
+  #report:empty { display: none; }
+  @keyframes blink { 50% { opacity: 0; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(3px); } }
+  @media (prefers-reduced-motion: reduce) {
+    .cursor, #progress div { animation: none; }
+  }
 </style>
 </head>
 <body>
-  <h1>Brand Pulse</h1>
-  <div id="controls">
-    <input id="brand" placeholder="Enter a brand name" autofocus>
-    <button id="go">Check</button>
+  <div class="window">
+    <div class="chrome">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <h1>brand-pulse — zsh</h1>
+    </div>
+    <div class="term">
+      <div id="controls">
+        <span class="ps1">$ </span><span>brand-pulse check&nbsp;</span><input
+          id="brand" placeholder="enter a brand name" autofocus
+          autocomplete="off" spellcheck="false"><span class="cursor"
+          aria-hidden="true">&#9615;</span>
+        <button id="go">run</button>
+      </div>
+      <div id="status"></div>
+      <div id="progress"></div>
+      <pre id="report"></pre>
+    </div>
   </div>
-  <div id="status"></div>
-  <div id="progress"></div>
-  <pre id="report"></pre>
   <script>
     const brandInput = document.getElementById('brand');
     const goBtn = document.getElementById('go');
@@ -51,13 +116,50 @@ INDEX_HTML = """<!doctype html>
     const progressEl = document.getElementById('progress');
     const reportEl = document.getElementById('report');
 
+    // Must match the platform names run_brand_pulse reports via on_progress.
+    const PLATFORMS = ['Reddit', 'Twitter/X', 'YouTube', 'Web/News'];
+    const SPIN = ['\\u280b', '\\u2819', '\\u2839', '\\u2838', '\\u283c',
+                  '\\u2834', '\\u2826', '\\u2827', '\\u2807', '\\u280f'];
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let spinTimer = null;
+    let spinFrame = 0;
+
+    function pad(name) { return name.toLowerCase().padEnd(10); }
+
+    function startSpinner() {
+      if (reducedMotion) return; // rows keep a static glyph instead
+      spinTimer = setInterval(() => {
+        spinFrame = (spinFrame + 1) % SPIN.length;
+        for (const el of document.querySelectorAll('#progress .spin')) {
+          el.textContent = SPIN[spinFrame];
+        }
+      }, 90);
+    }
+
+    function stopSpinner() {
+      clearInterval(spinTimer);
+      spinTimer = null;
+    }
+
     function runCheck() {
       const brand = brandInput.value.trim();
       if (!brand) return;
-      statusEl.textContent = 'Checking ' + brand + '…';
+      statusEl.textContent = '> checking ' + brand + '...';
       progressEl.innerHTML = '';
       reportEl.textContent = '';
       goBtn.disabled = true;
+
+      for (const p of PLATFORMS) {
+        const row = document.createElement('div');
+        row.className = 'pending';
+        row.dataset.platform = p;
+        const spin = document.createElement('span');
+        spin.className = 'spin';
+        spin.textContent = '\\u25b8';
+        row.append('  ', spin, ' ' + pad(p) + 'scanning...');
+        progressEl.appendChild(row);
+      }
+      startSpinner();
 
       const es = new EventSource('/api/stream?brand=' + encodeURIComponent(brand));
 
@@ -65,16 +167,18 @@ INDEX_HTML = """<!doctype html>
         const data = JSON.parse(e.data);
         const line = document.createElement('div');
         if (data.status === 'ok') {
-          line.textContent = '✓ ' + data.platform + ': ' + data.count + ' (' + data.scope + ')';
+          line.textContent = '  \\u2713 ' + pad(data.platform) + data.count + ' (' + data.scope + ')';
         } else {
           line.className = 'error';
-          line.textContent = '✗ ' + data.platform + ' unavailable: ' + data.message;
+          line.textContent = '  \\u2717 ' + pad(data.platform) + 'unavailable: ' + data.message;
         }
-        progressEl.appendChild(line);
+        const row = progressEl.querySelector('[data-platform="' + CSS.escape(data.platform) + '"]');
+        if (row) row.replaceWith(line); else progressEl.appendChild(line);
       });
 
       es.addEventListener('done', (e) => {
         const data = JSON.parse(e.data);
+        stopSpinner();
         statusEl.textContent = '';
         reportEl.textContent = data.report;
         goBtn.disabled = false;
@@ -87,12 +191,16 @@ INDEX_HTML = """<!doctype html>
       // Using addEventListener('error', ...) AND es.onerror would both
       // fire for both cases, so this single handler covers both.
       es.addEventListener('error', (e) => {
+        stopSpinner();
         statusEl.textContent = '';
+        for (const row of progressEl.querySelectorAll('.pending')) {
+          row.textContent = '  \\u00b7 ' + pad(row.dataset.platform) + 'skipped';
+        }
         if (e.data) {
           const data = JSON.parse(e.data);
           const line = document.createElement('div');
           line.className = 'error';
-          line.textContent = '✗ ' + data.message;
+          line.textContent = '  \\u2717 ' + data.message;
           progressEl.appendChild(line);
         }
         goBtn.disabled = false;
