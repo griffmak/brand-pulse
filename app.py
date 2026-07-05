@@ -29,6 +29,7 @@ INDEX_HTML = """<!doctype html>
   #controls { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
   #brand { flex: 1; padding: 0.5rem; font-size: 1rem; }
   button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
+  #status { font-family: monospace; color: #666; }
   #progress div { padding: 0.25rem 0; font-family: monospace; }
   #progress .error { color: #b00020; }
   #report { white-space: pre-wrap; font-family: monospace; background: #f5f5f5; padding: 1rem; margin-top: 1rem; }
@@ -40,17 +41,20 @@ INDEX_HTML = """<!doctype html>
     <input id="brand" placeholder="Enter a brand name" autofocus>
     <button id="go">Check</button>
   </div>
+  <div id="status"></div>
   <div id="progress"></div>
   <pre id="report"></pre>
   <script>
     const brandInput = document.getElementById('brand');
     const goBtn = document.getElementById('go');
+    const statusEl = document.getElementById('status');
     const progressEl = document.getElementById('progress');
     const reportEl = document.getElementById('report');
 
     function runCheck() {
       const brand = brandInput.value.trim();
       if (!brand) return;
+      statusEl.textContent = 'Checking ' + brand + '…';
       progressEl.innerHTML = '';
       reportEl.textContent = '';
       goBtn.disabled = true;
@@ -71,6 +75,7 @@ INDEX_HTML = """<!doctype html>
 
       es.addEventListener('done', (e) => {
         const data = JSON.parse(e.data);
+        statusEl.textContent = '';
         reportEl.textContent = data.report;
         goBtn.disabled = false;
         es.close();
@@ -82,6 +87,7 @@ INDEX_HTML = """<!doctype html>
       // Using addEventListener('error', ...) AND es.onerror would both
       // fire for both cases, so this single handler covers both.
       es.addEventListener('error', (e) => {
+        statusEl.textContent = '';
         if (e.data) {
           const data = JSON.parse(e.data);
           const line = document.createElement('div');
