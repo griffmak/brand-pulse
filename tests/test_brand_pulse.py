@@ -341,3 +341,66 @@ def test_run_brand_pulse_without_on_progress_still_works():
     )
     assert len(results) == 4
     assert errors == []
+
+
+from brand_pulse import synthesize
+
+
+def _results_with_titles():
+    return [
+        PlatformResult("Reddit", 25, "top 25", ["Nike beats estimates", "NKE earnings play"]),
+        PlatformResult("YouTube", 25, "top 25", ["Nike shoe review"]),
+    ]
+
+
+def test_synthesize_parses_claude_json_output():
+    fake = subprocess.CompletedProcess(
+        args=[], returncode=0,
+        stdout='{"brief": "Earnings dominate.", "themes": [{"title": "Earnings",'
+               ' "platforms": ["Reddit"], "action": "Amplify the beat."}],'
+               ' "relevant": 2, "sampled": 3}',
+        stderr="",
+    )
+    with patch("brand_pulse.subprocess.run", return_value=fake) as mock_run:
+        out = synthesize("nike", _results_with_titles())
+
+    assert out["brief"] == "Earnings dominate."
+    assert out["themes"][0]["action"] == "Amplify the beat."
+    prompt = mock_run.call_args.kwargs["input"]
+    assert "nike" in prompt
+    assert "[Reddit] Nike beats estimates" in prompt
+    assert "[YouTube] Nike shoe review" in prompt
+
+
+def test_synthesize_strips_markdown_fences():
+    fake = subprocess.CompletedProcess(
+        args=[], returncode=0,
+        stdout='```json\n{"brief": "b", "themes": [], "relevant": 0, "sampled": 3}\n```',
+        stderr="",
+    )
+    with patch("brand_pulse.subprocess.run", return_value=fake):
+        out = synthesize("nike", _results_with_titles())
+
+    assert out["brief"] == "b"
+
+
+def test_synthesize_returns_none_when_claude_missing():
+    with patch("brand_pulse.subprocess.run", side_effect=FileNotFoundError):
+        assert synthesize("nike", _results_with_titles()) is None
+
+
+def test_synthesize_returns_none_on_malformed_output():
+    fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="not json", stderr="")
+    with patch("brand_pulse.subprocess.run", return_value=fake):
+        assert synthesize("nike", _results_with_titles()) is None
+
+
+def test_synthesize_returns_none_on_nonzero_exit():
+    fake = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
+    with patch("brand_pulse.subprocess.run", return_value=fake):
+        assert synthesize("nike", _results_with_titles()) is None
+
+
+def test_synthesize_returns_none_when_no_titles():
+    results = [PlatformResult("Reddit", 0, "top 25", [])]
+    assert synthesize("nike", results) is None

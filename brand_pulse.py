@@ -72,7 +72,7 @@ def search_reddit(query: str, days: int = 7, limit: int = 25) -> PlatformResult:
         platform="Reddit",
         count=len(posts),
         scope=scope,
-        sample_titles=[p["title"] for p in posts[:3]],
+        sample_titles=[p["title"] for p in posts],
     )
 
 
@@ -95,7 +95,7 @@ def search_twitter(query: str, days: int = 7, limit: int = 25) -> PlatformResult
         platform="Twitter/X",
         count=len(tweets),
         scope=f"top {limit} tweets since {since_date}",
-        sample_titles=[t["text"] for t in tweets[:3]],
+        sample_titles=[t["text"] for t in tweets],
     )
 
 
@@ -109,7 +109,7 @@ def search_youtube(query: str, limit: int = 25) -> PlatformResult:
         platform="YouTube",
         count=len(titles),
         scope=f"top {limit} YouTube results (no native recency filter)",
-        sample_titles=titles[:3],
+        sample_titles=titles,
     )
 
 
@@ -132,7 +132,7 @@ def search_web(query: str, limit: int = 25) -> PlatformResult:
         platform="Web/News",
         count=len(titles),
         scope=f"top {limit} web/news results",
-        sample_titles=titles[:3],
+        sample_titles=titles,
     )
 
 
@@ -140,12 +140,61 @@ def format_report(brand: str, results: list[PlatformResult]) -> str:
     lines = [f"Brand Pulse: {brand}", "=" * (13 + len(brand))]
     for r in results:
         lines.append(f"  {r.platform}: {r.count} ({r.scope})")
-        for title in r.sample_titles:
+        # ponytail: full sample_titles feed synthesize(); the report shows 3
+        for title in r.sample_titles[:3]:
             lines.append(f"      - {title}")
     total = sum(r.count for r in results)
     lines.append("")
     lines.append(f"Total: {total} mentions across {len(results)} platform(s)")
     return "\n".join(lines)
+
+
+SYNTH_MODEL = "claude-opus-4-8"
+
+
+def synthesize(brand: str, results: list[PlatformResult]):
+    """Turn the sampled titles into a brief + themes via the local claude CLI.
+
+    Returns {"brief", "themes": [{"title", "platforms", "action"}],
+    "relevant", "sampled"} or None when there is nothing to synthesize or the
+    CLI is missing/fails — callers degrade to the counts-and-titles report.
+    """
+    items = [(r.platform, t) for r in results for t in r.sample_titles]
+    if not items:
+        return None
+    listing = "\n".join(f"[{p}] {t}" for p, t in items)
+    n = len(items)
+    prompt = f"""You are a brand analyst. Below are {n} raw titles/snippets sampled from
+Reddit, Twitter/X, YouTube, and Web/News search results for the brand
+"{brand}" (roughly the past week). Counts are top-N samples, not exhaustive.
+
+1. Discard items not plausibly about the brand "{brand}".
+2. Group the rest into at most 3 themes.
+3. For each theme: a short title, the platforms it appears on, and one
+   suggested move for the brand's social/comms team. No invented numbers.
+4. Write a 1-2 sentence overall brief. If little is relevant, say the
+   conversation is quiet rather than inventing themes.
+
+Respond with ONLY valid JSON, no markdown fences, in exactly this shape:
+{{"brief": "...", "themes": [{{"title": "...", "platforms": ["..."], "action": "..."}}], "relevant": <int>, "sampled": {n}}}
+
+Items:
+{listing}"""
+    try:
+        proc = subprocess.run(
+            ["claude", "-p", "--model", SYNTH_MODEL],
+            input=prompt, capture_output=True, text=True, timeout=300,
+        )
+        if proc.returncode != 0:
+            return None
+        text = proc.stdout
+        # ponytail: slice first { to last } — survives fences and preamble
+        data = json.loads(text[text.index("{"): text.rindex("}") + 1])
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    if not isinstance(data, dict) or "brief" not in data or "themes" not in data:
+        return None
+    return data
 
 
 def run_brand_pulse(
@@ -209,6 +258,7 @@ def main():
     args = parser.parse_args()
 
     results, errors = run_brand_pulse(args.brand, days=args.days, limit=args.limit)
+    synthesis = synthesize(args.brand, results)
 
     if args.json:
         payload = {
@@ -216,10 +266,21 @@ def main():
             "results": [r.__dict__ for r in results],
             "errors": [{"platform": p, "message": m} for p, m in errors],
             "total_mentions": sum(r.count for r in results),
+            "synthesis": synthesis,
         }
         print(json.dumps(payload, indent=2))
     else:
         print(format_report(args.brand, results))
+        if synthesis:
+            print(f"\nBrief: {synthesis['brief']}")
+            for t in synthesis.get("themes", []):
+                platforms = ", ".join(t.get("platforms", []))
+                print(f"  - {t['title']} ({platforms}) -> {t['action']}")
+            print(f"Signal: {synthesis.get('relevant', '?')} of "
+                  f"{synthesis.get('sampled', '?')} sampled items about {args.brand}")
+        else:
+            print("\n  [!] synthesis unavailable (claude CLI missing or failed)",
+                  file=sys.stderr)
         for platform, message in errors:
             print(f"\n  [!] {platform} unavailable: {message}", file=sys.stderr)
 

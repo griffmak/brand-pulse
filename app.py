@@ -14,7 +14,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, StreamingResponse
 
-from brand_pulse import format_report, run_brand_pulse
+from brand_pulse import format_report, run_brand_pulse, synthesize
 
 app = FastAPI()
 
@@ -83,8 +83,9 @@ INDEX_HTML = """<!doctype html>
     animation: rise 0.25s ease-out;
   }
   #summary:empty { display: none; }
-  #summary .total { font-size: 2.4rem; font-weight: 700; line-height: 1.2; }
+  #summary .brief { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.5rem; }
   #summary .sub { color: var(--dim); }
+  #summary .theme { margin-top: 0.4rem; }
   #report {
     white-space: pre-wrap; font: inherit; font-size: 12px; color: var(--dim);
     margin: 0.75rem 0 0;
@@ -158,7 +159,6 @@ INDEX_HTML = """<!doctype html>
       summaryEl.textContent = '';
       reportEl.textContent = '';
       goBtn.disabled = true;
-      let okPlatforms = 0;
 
       for (const p of PLATFORMS) {
         const row = document.createElement('div');
@@ -178,7 +178,6 @@ INDEX_HTML = """<!doctype html>
         const data = JSON.parse(e.data);
         const line = document.createElement('div');
         if (data.status === 'ok') {
-          okPlatforms += 1;
           line.textContent = '  \\u2713 ' + pad(data.platform) + data.count + ' (' + data.scope + ')';
         } else {
           line.className = 'error';
@@ -188,20 +187,56 @@ INDEX_HTML = """<!doctype html>
         if (row) row.replaceWith(line); else progressEl.appendChild(line);
       });
 
+      es.addEventListener('synth', (e) => {
+        const data = JSON.parse(e.data);
+        const row = document.createElement('div');
+        row.className = 'pending';
+        row.dataset.platform = 'synthesis';
+        const spin = document.createElement('span');
+        spin.className = 'spin';
+        spin.textContent = '\\u25b8';
+        row.append('  ', spin, ' ' + pad('synthesis') + 'reading ' +
+          data.headlines + ' headlines...');
+        progressEl.appendChild(row);
+      });
+
       es.addEventListener('done', (e) => {
         const data = JSON.parse(e.data);
         stopSpinner();
         statusEl.textContent = '';
-        const total = document.createElement('div');
-        const num = document.createElement('span');
-        num.className = 'total';
-        num.textContent = data.total;
-        total.append(num, ' mentions');
-        const sub = document.createElement('div');
-        sub.className = 'sub';
-        sub.textContent = brand + ' \\u00b7 ' + okPlatforms + ' of ' +
-          PLATFORMS.length + ' platforms reporting';
-        summaryEl.append(total, sub);
+        const synthRow = progressEl.querySelector('[data-platform="synthesis"]');
+        if (data.synthesis) {
+          const s = data.synthesis;
+          const themes = (s.themes || []).slice(0, 3);
+          if (synthRow) {
+            const line = document.createElement('div');
+            line.textContent = '  \\u2713 ' + pad('synthesis') + themes.length +
+              ' theme' + (themes.length === 1 ? '' : 's');
+            synthRow.replaceWith(line);
+          }
+          const brief = document.createElement('div');
+          brief.className = 'brief';
+          brief.textContent = s.brief;
+          summaryEl.append(brief);
+          for (const t of themes) {
+            const theme = document.createElement('div');
+            theme.className = 'theme';
+            theme.textContent = '\\u25b8 ' + t.title + ' \\u00b7 ' +
+              (t.platforms || []).join(', ').toLowerCase();
+            const action = document.createElement('div');
+            action.className = 'sub';
+            action.textContent = '   \\u2192 ' + t.action;
+            summaryEl.append(theme, action);
+          }
+          const signal = document.createElement('div');
+          signal.className = 'sub';
+          signal.style.marginTop = '0.6rem';
+          signal.textContent = '> signal: ' + s.relevant + ' of ' + s.sampled +
+            ' sampled items about ' + brand;
+          summaryEl.append(signal);
+        } else if (synthRow) {
+          synthRow.textContent = '  \\u00b7 ' + pad('synthesis') + 'unavailable';
+        }
         reportEl.textContent = data.report;
         goBtn.disabled = false;
         es.close();
@@ -258,7 +293,11 @@ def stream(brand: str, days: int = 7, limit: int = 25):
                 results, errors = run_brand_pulse(
                     brand, days=days, limit=limit, on_progress=on_progress
                 )
-                q.put(("done", results, errors))
+                headlines = sum(len(r.sample_titles) for r in results)
+                if headlines:
+                    q.put(("synth", headlines))
+                synthesis = synthesize(brand, results)
+                q.put(("done", results, errors, synthesis))
             except Exception as e:
                 q.put(("error", str(e)))
 
@@ -282,16 +321,20 @@ def stream(brand: str, days: int = 7, limit: int = 25):
                         "message": error,
                     }
                 yield f"event: progress\ndata: {json.dumps(payload)}\n\n"
+            elif item[0] == "synth":
+                _, headlines = item
+                yield f"event: synth\ndata: {json.dumps({'headlines': headlines})}\n\n"
             elif item[0] == "error":
                 _, message = item
                 yield f"event: error\ndata: {json.dumps({'message': message})}\n\n"
                 break
             else:
-                _, results, errors = item
+                _, results, errors, synthesis = item
                 report = format_report(brand, results)
                 payload = {
                     "report": report,
                     "total": sum(r.count for r in results),
+                    "synthesis": synthesis,
                 }
                 yield f"event: done\ndata: {json.dumps(payload)}\n\n"
                 break

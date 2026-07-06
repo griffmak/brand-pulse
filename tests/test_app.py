@@ -52,3 +52,37 @@ def test_stream_endpoint_emits_error_event_on_worker_exception():
 
     assert "event: error" in body
     assert '"message": "boom"' in body
+
+
+def test_stream_emits_synth_stage_and_synthesis_in_done_payload():
+    def fake_run(brand, days, limit, on_progress=None):
+        result = PlatformResult("Reddit", 5, "top 25", ["Nike beats estimates"])
+        if on_progress:
+            on_progress("Reddit", result, None)
+        return [result], []
+
+    fake_synthesis = {"brief": "Earnings dominate.", "themes": [], "relevant": 1, "sampled": 1}
+    with patch("app.run_brand_pulse", fake_run), \
+         patch("app.synthesize", return_value=fake_synthesis):
+        client = TestClient(app_module.app)
+        with client.stream("GET", "/api/stream", params={"brand": "nike"}) as response:
+            body = "".join(response.iter_text())
+
+    assert "event: synth" in body
+    assert '"headlines": 1' in body
+    assert '"brief": "Earnings dominate."' in body
+
+
+def test_stream_done_payload_has_null_synthesis_on_fallback():
+    def fake_run(brand, days, limit, on_progress=None):
+        result = PlatformResult("Reddit", 5, "top 25", ["Nike beats estimates"])
+        return [result], []
+
+    with patch("app.run_brand_pulse", fake_run), \
+         patch("app.synthesize", return_value=None):
+        client = TestClient(app_module.app)
+        with client.stream("GET", "/api/stream", params={"brand": "nike"}) as response:
+            body = "".join(response.iter_text())
+
+    assert '"synthesis": null' in body
+    assert "event: done" in body
