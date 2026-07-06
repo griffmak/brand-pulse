@@ -78,9 +78,16 @@ INDEX_HTML = """<!doctype html>
   #progress div { animation: rise 0.25s ease-out; }
   #progress .pending { color: var(--dim); }
   #progress .error { color: var(--red); }
+  #summary {
+    margin-top: 1rem; padding-top: 1rem; border-top: 1px dashed var(--border);
+    animation: rise 0.25s ease-out;
+  }
+  #summary:empty { display: none; }
+  #summary .total { font-size: 2.4rem; font-weight: 700; line-height: 1.2; }
+  #summary .sub { color: var(--dim); }
   #report {
-    white-space: pre-wrap; font: inherit;
-    margin: 1rem 0 0; padding-top: 1rem; border-top: 1px dashed var(--border);
+    white-space: pre-wrap; font: inherit; font-size: 12px; color: var(--dim);
+    margin: 0.75rem 0 0;
   }
   #report:empty { display: none; }
   @keyframes blink { 50% { opacity: 0; } }
@@ -106,6 +113,7 @@ INDEX_HTML = """<!doctype html>
       </div>
       <div id="status"></div>
       <div id="progress"></div>
+      <div id="summary"></div>
       <pre id="report"></pre>
     </div>
   </div>
@@ -114,6 +122,7 @@ INDEX_HTML = """<!doctype html>
     const goBtn = document.getElementById('go');
     const statusEl = document.getElementById('status');
     const progressEl = document.getElementById('progress');
+    const summaryEl = document.getElementById('summary');
     const reportEl = document.getElementById('report');
 
     // Must match the platform names run_brand_pulse reports via on_progress.
@@ -146,8 +155,10 @@ INDEX_HTML = """<!doctype html>
       if (!brand) return;
       statusEl.textContent = '> checking ' + brand + '...';
       progressEl.innerHTML = '';
+      summaryEl.textContent = '';
       reportEl.textContent = '';
       goBtn.disabled = true;
+      let okPlatforms = 0;
 
       for (const p of PLATFORMS) {
         const row = document.createElement('div');
@@ -167,6 +178,7 @@ INDEX_HTML = """<!doctype html>
         const data = JSON.parse(e.data);
         const line = document.createElement('div');
         if (data.status === 'ok') {
+          okPlatforms += 1;
           line.textContent = '  \\u2713 ' + pad(data.platform) + data.count + ' (' + data.scope + ')';
         } else {
           line.className = 'error';
@@ -180,6 +192,16 @@ INDEX_HTML = """<!doctype html>
         const data = JSON.parse(e.data);
         stopSpinner();
         statusEl.textContent = '';
+        const total = document.createElement('div');
+        const num = document.createElement('span');
+        num.className = 'total';
+        num.textContent = data.total;
+        total.append(num, ' mentions');
+        const sub = document.createElement('div');
+        sub.className = 'sub';
+        sub.textContent = brand + ' \\u00b7 ' + okPlatforms + ' of ' +
+          PLATFORMS.length + ' platforms reporting';
+        summaryEl.append(total, sub);
         reportEl.textContent = data.report;
         goBtn.disabled = false;
         es.close();
