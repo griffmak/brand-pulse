@@ -39,6 +39,9 @@ class PlatformResult:
     count: int
     scope: str
     sample_titles: list[str] = field(default_factory=list)
+    # ponytail: parallel to sample_titles ("" when unknown); keeps the str
+    # title list every existing caller depends on
+    sample_urls: list[str] = field(default_factory=list)
 
 
 def _reddit_time_filter(days: int) -> str:
@@ -73,6 +76,7 @@ def search_reddit(query: str, days: int = 7, limit: int = 25) -> PlatformResult:
         count=len(posts),
         scope=scope,
         sample_titles=[p["title"] for p in posts],
+        sample_urls=[p.get("url", "") for p in posts],
     )
 
 
@@ -96,20 +100,35 @@ def search_twitter(query: str, days: int = 7, limit: int = 25) -> PlatformResult
         count=len(tweets),
         scope=f"top {limit} tweets since {since_date}",
         sample_titles=[t["text"] for t in tweets],
+        sample_urls=[
+            f"https://x.com/i/status/{t['id']}" if t.get("id") else ""
+            for t in tweets
+        ],
     )
 
 
 def search_youtube(query: str, limit: int = 25) -> PlatformResult:
     output = run_command([
         "yt-dlp", f"ytsearch{limit}:{query}",
-        "--flat-playlist", "--print", "%(title)s", "--no-warnings",
+        "--flat-playlist", "--print", "%(title)s\t%(url)s", "--no-warnings",
     ], timeout=60)
-    titles = [line for line in output.splitlines() if line.strip()]
+    titles, urls = [], []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        title, _, url = line.rpartition("\t")
+        if title:
+            titles.append(title)
+            urls.append(url)
+        else:  # no tab in line: it's all title, no url
+            titles.append(url)
+            urls.append("")
     return PlatformResult(
         platform="YouTube",
         count=len(titles),
         scope=f"top {limit} YouTube results (no native recency filter)",
         sample_titles=titles,
+        sample_urls=urls,
     )
 
 
@@ -123,16 +142,19 @@ def search_web(query: str, limit: int = 25) -> PlatformResult:
     except json.JSONDecodeError as e:
         raise CommandError(f"mcporter returned invalid JSON: {e}") from e
     text = payload["content"][0]["text"]
-    titles = [
-        line[len("Title: "):].strip()
-        for line in text.splitlines()
-        if line.startswith("Title: ")
-    ]
+    titles, urls = [], []
+    for line in text.splitlines():
+        if line.startswith("Title: "):
+            titles.append(line[len("Title: "):].strip())
+            urls.append("")  # paired with the URL: line that follows
+        elif line.startswith("URL: ") and titles:
+            urls[-1] = line[len("URL: "):].strip()
     return PlatformResult(
         platform="Web/News",
         count=len(titles),
         scope=f"top {limit} web/news results",
         sample_titles=titles,
+        sample_urls=urls,
     )
 
 
@@ -149,7 +171,7 @@ def format_report(brand: str, results: list[PlatformResult]) -> str:
     return "\n".join(lines)
 
 
-SYNTH_MODEL = "claude-opus-4-8"
+SYNTH_MODEL = "claude-haiku-4-5"  # ponytail: cheap/fast summarization; bump if quality lacking
 
 
 def synthesize(brand: str, results: list[PlatformResult]):
@@ -159,24 +181,31 @@ def synthesize(brand: str, results: list[PlatformResult]):
     "relevant", "sampled"} or None when there is nothing to synthesize or the
     CLI is missing/fails — callers degrade to the counts-and-titles report.
     """
-    items = [(r.platform, t) for r in results for t in r.sample_titles]
+    items = []
+    for r in results:
+        for i, title in enumerate(r.sample_titles):
+            url = r.sample_urls[i] if i < len(r.sample_urls) else ""
+            items.append((r.platform, title, url))
     if not items:
         return None
-    listing = "\n".join(f"[{p}] {t}" for p, t in items)
+    listing = "\n".join(
+        f"{i}. [{p}] {t}" for i, (p, t, _) in enumerate(items, start=1)
+    )
     n = len(items)
-    prompt = f"""You are a brand analyst. Below are {n} raw titles/snippets sampled from
+    prompt = f"""You are a brand analyst. Below are {n} numbered titles/snippets sampled from
 Reddit, Twitter/X, YouTube, and Web/News search results for the brand
 "{brand}" (roughly the past week). Counts are top-N samples, not exhaustive.
 
 1. Discard items not plausibly about the brand "{brand}".
 2. Group the rest into at most 3 themes.
-3. For each theme: a short title, the platforms it appears on, and one
-   suggested move for the brand's social/comms team. No invented numbers.
+3. For each theme: a short title, the platforms it appears on, one suggested
+   move for the brand's social/comms team (no invented numbers), and
+   "sources": the item numbers (up to 3) of the strongest supporting items.
 4. Write a 1-2 sentence overall brief. If little is relevant, say the
    conversation is quiet rather than inventing themes.
 
 Respond with ONLY valid JSON, no markdown fences, in exactly this shape:
-{{"brief": "...", "themes": [{{"title": "...", "platforms": ["..."], "action": "..."}}], "relevant": <int>, "sampled": {n}}}
+{{"brief": "...", "themes": [{{"title": "...", "platforms": ["..."], "action": "...", "sources": [<item numbers>]}}], "relevant": <int>, "sampled": {n}}}
 
 Items:
 {listing}"""
@@ -194,6 +223,19 @@ Items:
         return None
     if not isinstance(data, dict) or "brief" not in data or "themes" not in data:
         return None
+    # Map cited item numbers back to the real items so a cited URL is always
+    # one we actually collected — the model never writes URLs itself.
+    for theme in data["themes"]:
+        if not isinstance(theme, dict):
+            continue
+        cited = theme.get("sources") or []
+        theme["sources"] = [
+            {"platform": items[num - 1][0],
+             "title": items[num - 1][1],
+             "url": items[num - 1][2]}
+            for num in cited
+            if isinstance(num, int) and 1 <= num <= len(items)
+        ][:3]
     return data
 
 
@@ -276,6 +318,8 @@ def main():
             for t in synthesis.get("themes", []):
                 platforms = ", ".join(t.get("platforms", []))
                 print(f"  - {t['title']} ({platforms}) -> {t['action']}")
+                for s in t.get("sources", []):
+                    print(f"      ↗ {s['title'][:70]} — {s['url']}")
             print(f"Signal: {synthesis.get('relevant', '?')} of "
                   f"{synthesis.get('sampled', '?')} sampled items about {args.brand}")
         else:

@@ -50,6 +50,10 @@ def test_search_reddit_parses_count_and_scope():
     assert result.platform == "Reddit"
     assert result.count == 2
     assert result.scope == "top 25 Reddit results, past week"
+    assert result.sample_urls == [
+        "https://reddit.com/r/duolingo/1ujtebv",
+        "https://reddit.com/r/duolingo/1uibfc3",
+    ]
     assert result.sample_titles == [
         "Canceling Duolingo Max and selling my stock.",
         "Duolingo is overhated.",
@@ -96,6 +100,10 @@ def test_search_twitter_parses_count_and_scope():
         "Duolingo streak day 400, still going strong",
         "why does the duolingo owl haunt my dreams",
     ]
+    assert result.sample_urls == [
+        "https://x.com/i/status/1",
+        "https://x.com/i/status/2",
+    ]
     called_cmd = mock_run.call_args[0][0]
     assert called_cmd[:3] == ["twitter", "search", "Duolingo"]
     assert "--since" in called_cmd
@@ -110,7 +118,11 @@ def test_search_twitter_raises_commanderror_on_invalid_json():
 
 from brand_pulse import search_youtube
 
-_YOUTUBE_TITLES = "Learn Chess on Duolingo\nDo your lesson, no buts.\nLanguage Learning Is Hard\n"
+_YOUTUBE_TITLES = (
+    "Learn Chess on Duolingo\thttps://youtube.com/watch?v=a\n"
+    "Do your lesson, no buts.\thttps://youtube.com/watch?v=b\n"
+    "Language Learning Is Hard\thttps://youtube.com/watch?v=c\n"
+)
 
 
 def test_search_youtube_parses_count_and_scope():
@@ -125,9 +137,14 @@ def test_search_youtube_parses_count_and_scope():
         "Do your lesson, no buts.",
         "Language Learning Is Hard",
     ]
+    assert result.sample_urls == [
+        "https://youtube.com/watch?v=a",
+        "https://youtube.com/watch?v=b",
+        "https://youtube.com/watch?v=c",
+    ]
     mock_run.assert_called_once_with(
         ["yt-dlp", "ytsearch25:Duolingo", "--flat-playlist",
-         "--print", "%(title)s", "--no-warnings"],
+         "--print", "%(title)s\t%(url)s", "--no-warnings"],
         timeout=60,
     )
 
@@ -165,6 +182,11 @@ def test_search_web_parses_count_and_scope():
         "Duolingo Resets 'Unhinged' Marketing - Business Insider",
         "Duolingo Won the Internet With Chaos - Inc.",
         "Duolingo makes licensing debut with MINISO - Brands Untapped",
+    ]
+    assert result.sample_urls == [
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/c",
     ]
     mock_run.assert_called_once_with(
         ["mcporter", "call", "exa.web_search_exa",
@@ -404,3 +426,30 @@ def test_synthesize_returns_none_on_nonzero_exit():
 def test_synthesize_returns_none_when_no_titles():
     results = [PlatformResult("Reddit", 0, "top 25", [])]
     assert synthesize("nike", results) is None
+
+
+def test_synthesize_maps_cited_item_numbers_to_real_urls():
+    results = [
+        PlatformResult("Reddit", 2, "top 25",
+                       ["Nike beats estimates", "NKE earnings play"],
+                       sample_urls=["https://reddit.com/1", "https://reddit.com/2"]),
+        PlatformResult("YouTube", 1, "top 25", ["Nike shoe review"],
+                       sample_urls=["https://youtube.com/watch?v=x"]),
+    ]
+    fake = subprocess.CompletedProcess(
+        args=[], returncode=0,
+        stdout='{"brief": "b", "themes": [{"title": "Earnings", "platforms": ["Reddit"],'
+               ' "action": "a", "sources": [1, 3, 99]}], "relevant": 3, "sampled": 3}',
+        stderr="",
+    )
+    with patch("brand_pulse.subprocess.run", return_value=fake) as mock_run:
+        out = synthesize("nike", results)
+
+    prompt = mock_run.call_args.kwargs["input"]
+    assert "1. [Reddit] Nike beats estimates" in prompt
+    assert "3. [YouTube] Nike shoe review" in prompt
+    # cited numbers resolve to the real items; out-of-range 99 is dropped
+    assert out["themes"][0]["sources"] == [
+        {"platform": "Reddit", "title": "Nike beats estimates", "url": "https://reddit.com/1"},
+        {"platform": "YouTube", "title": "Nike shoe review", "url": "https://youtube.com/watch?v=x"},
+    ]

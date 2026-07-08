@@ -86,6 +86,9 @@ INDEX_HTML = """<!doctype html>
   #summary .brief { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.5rem; }
   #summary .sub { color: var(--dim); }
   #summary .theme { margin-top: 0.4rem; }
+  #summary .src { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #summary a { color: var(--dim); text-decoration: underline dotted; }
+  #summary a:hover, #summary a:focus-visible { color: var(--green); outline: none; }
   #report {
     white-space: pre-wrap; font: inherit; font-size: 12px; color: var(--dim);
     margin: 0.75rem 0 0;
@@ -227,6 +230,22 @@ INDEX_HTML = """<!doctype html>
             action.className = 'sub';
             action.textContent = '   \\u2192 ' + t.action;
             summaryEl.append(theme, action);
+            for (const src of (t.sources || [])) {
+              const line = document.createElement('div');
+              line.className = 'sub src';
+              line.append('   \\u2197 ');
+              if (src.url) {
+                const a = document.createElement('a');
+                a.href = src.url;
+                a.target = '_blank';
+                a.rel = 'noopener';
+                a.textContent = src.title;
+                line.append(a);
+              } else {
+                line.append(src.title);
+              }
+              summaryEl.append(line);
+            }
           }
           const signal = document.createElement('div');
           signal.className = 'sub';
